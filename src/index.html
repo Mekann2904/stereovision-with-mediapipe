@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hand Distance PoC</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+      .app { display: grid; grid-template-columns: 1fr 320px; height: 100%; }
+      .stage { position: relative; background: #111; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      video { max-width: 100%; max-height: 100%; object-fit: contain; }
+      canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+      #stage-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; z-index: 2; display: none; }
+      #three-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+      .panel { background: #1a1a1a; color: #eaeaea; padding: 12px 14px; overflow-y: auto; }
+      .panel h2 { margin: 8px 0 4px; font-size: 14px; color: #bbb; }
+      .stat { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; padding: 6px 0; }
+      .value { font-size: 22px; color: #fff; font-variant-numeric: tabular-nums; }
+      .sub { font-size: 12px; color: #aaa; }
+      .bar { height: 8px; background: #333; border-radius: 4px; overflow: hidden; }
+      .bar > div { height: 100%; background: #4caf50; width: 0%; transition: width 60ms linear; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .field { margin: 8px 0; }
+      .field label { display: block; font-size: 12px; color: #bbb; margin-bottom: 4px; }
+      .field input, .field select { width: 100%; padding: 6px; border-radius: 6px; border: 1px solid #333; background: #0f0f0f; color: #eaeaea; }
+      .field button { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #333; background: #222; color: #eaeaea; cursor: pointer; }
+      .status { margin-top: 8px; font-weight: 600; }
+      .status.ok { color: #7bd88f; }
+      .status.warn { color: #ffd166; }
+      .status.err { color: #ff6961; }
+      .hint { font-size: 12px; color: #888; }
+      .chart { width: 100%; height: 120px; background: #0f0f0f; border: 1px solid #222; border-radius: 6px; }
+      .brightness-indicator { font-size: 12px; color: #aaa; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="stage">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay" class="overlay"></canvas>
+        <img id="stage-img" alt="stage preview" />
+        <div id="three-container" style="display:none;"></div>
+      </div>
+      <div class="panel">
+        <h2>現在値（手1）</h2>
+        <div class="stat"><div>正規化</div><div class="value" id="val-norm-1">N/A</div></div>
+        <div class="bar"><div id="bar-norm-1"></div></div>
+        <div class="stat"><div>px</div><div class="value" id="val-px-1">N/A</div></div>
+        <div class="bar"><div id="bar-px-1"></div></div>
+        <h2>現在値（手2）</h2>
+        <div class="stat"><div>正規化</div><div class="value" id="val-norm-2">N/A</div></div>
+        <div class="bar"><div id="bar-norm-2"></div></div>
+        <div class="stat"><div>px</div><div class="value" id="val-px-2">N/A</div></div>
+        <div class="bar"><div id="bar-px-2"></div></div>
+        <div class="stat"><div>m（参考）</div><div class="value" id="val-world">N/A</div></div>
+        <canvas id="chart" class="chart"></canvas>
+
+        <h2>設定</h2>
+        <div class="field">
+          <label>顔トラッキング</label>
+          <select id="face-on">
+            <option value="false">OFF</option>
+            <option value="true" selected>ON</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>ホリスティック検出（包括）</label>
+          <select id="holistic-on">
+            <option value="false" selected>OFF</option>
+            <option value="true">ON（モデル配置時）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>映像表示</label>
+          <select id="video-visible">
+            <option value="true" selected>ON（映像+オーバーレイ）</option>
+            <option value="false">OFF（黒背景にオーバーレイのみ）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>明るさ制御</label>
+          <select id="brightness-mode">
+            <option value="off" selected>OFF</option>
+            <option value="app">アプリ内</option>
+            <option value="system">システム（要brightnessコマンド）</option>
+          </select>
+          <div class="brightness-indicator" id="brightness-label">明るさ: OFF</div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>ランドマークA</label>
+            <input id="pair-a" type="number" min="0" max="20" value="4" />
+          </div>
+          <div class="field">
+            <label>ランドマークB</label>
+            <input id="pair-b" type="number" min="0" max="20" value="8" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>平滑化α</label>
+            <input id="alpha" type="number" min="0" max="1" step="0.05" value="0.5" />
+          </div>
+          <div class="field">
+            <label>目標FPS</label>
+            <select id="fps">
+              <option value="30">30</option>
+              <option value="60">60</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>信頼度閾値</label>
+            <input id="confidence" type="number" min="0.1" max="1" step="0.1" value="0.7" />
+          </div>
+          <div class="field">
+            <label>履歴長</label>
+            <select id="history">
+              <option value="3">3フレーム</option>
+              <option value="5" selected>5フレーム</option>
+              <option value="7">7フレーム</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>解像度</label>
+            <select id="res">
+              <option value="480p">480p</option>
+              <option value="720p">720p</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>単位</label>
+            <select id="unit">
+              <option value="normalized">正規化</option>
+              <option value="px">px</option>
+              <option value="world">m（参考）</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>ランドマーク重畳</label>
+          <select id="overlay-on">
+            <option value="true">ON</option>
+            <option value="false">OFF</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>カメラデバイス</label>
+          <select id="camera"></select>
+        </div>
+        <div class="field">
+          <button id="start">カメラ開始</button>
+          <div style="height:6px"></div>
+          <button id="retry">カメラ再試行</button>
+        </div>
+
+        <h2>3Dプレビュー</h2>
+        <div class="field">
+          <button id="pick-image">画像選択</button>
+        </div>
+        <div class="row">
+          <div class="field">
+            <button id="gen-depth">深度生成（DAv2）</button>
+          </div>
+          <div class="field">
+            <button id="toggle-3d">3D表示切替</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>深度マップ</label>
+          <select id="depth-source">
+            <option value="auto" selected>自動（生成/同名探索）</option>
+            <option value="pick">手動選択</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>深度マップ形式</label>
+          <select id="depth-format">
+            <option value="grayscale" selected>グレースケール（標準）</option>
+            <option value="raw16bit">16-bit Raw出力</option>
+            <option value="colorized">カラー可視化</option>
+          </select>
+        </div>
+        <div class="field">
+          <button id="pick-depth">深度マップ選択</button>
+        </div>
+        <div class="field">
+          <label>メイン表示</label>
+          <select id="main-display">
+            <option value="camera" selected>カメラ</option>
+            <option value="3d">3D</option>
+            <option value="image">元画像</option>
+            <option value="depth">深度画像</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>画像プレビュー</label>
+          <img id="img-preview" alt="プレビュー" style="display:block; width:100%; max-height:160px; object-fit:contain; background:#0f0f0f; border:1px solid #222; border-radius:6px;" />
+        </div>
+        <div class="field">
+          <label>深度プレビュー</label>
+          <img id="depth-preview" alt="深度プレビュー" style="display:block; width:100%; max-height:160px; object-fit:contain; background:#0f0f0f; border:1px solid #222; border-radius:6px;" />
+        </div>
+        <div class="hint" id="three-hint">任意の画像→深度生成/選択→3D表示。グレースケール/16-bit/カラー深度マップ対応。顔の動きで視差効果。</div>
+
+        <div id="status" class="status">初期化中...</div>
+        <div class="hint" id="cam-error">カメラ拒否時は権限を許可して再起動。</div>
+      </div>
+    </div>
+    <script src="renderer.js" type="module"></script>
+  </body>
+  </html>

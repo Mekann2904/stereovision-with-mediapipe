@@ -1,0 +1,21 @@
+{
+  "name": "mediapipe-hand-distance-poc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron + MediaPipe Tasks (PoC): 指定ランドマーク間距離のリアルタイム表示",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "lint": "echo 'No linter configured'",
+    "build": "echo 'Use electron-builder/forge later'",
+    "models": "bash scripts/fetch_models.sh"
+  },
+  "devDependencies": {
+    "electron": "^37.3.0"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.22-rc.20250304",
+    "three": "^0.158.0"
+  }
+}
