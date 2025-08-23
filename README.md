@@ -1,0 +1,2 @@
+# stereovision-with-mediapipe
+深度画像とMediaPipeを使用した立体視の実現性について検証するためのプログラム
