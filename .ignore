@@ -1,0 +1,12 @@
+# Generic ignores for search tools (ripgrep/fd)
+.DS_Store
+node_modules/
+__pycache__/
+.venv/
+.cache/
+dist/
+out/
+logs/
+*.log
+
+# Note: ripgrep は .gitignore も自動的に参照する
