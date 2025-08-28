@@ -110,17 +110,18 @@ jobs:
           path: logs/**
           if-no-files-found: warn
 
-  release:
+    release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
     runs-on: ubuntu-latest
 
-    # ← releaseジョブはルートで実行（srcにしない）
-    defaults:
-      run:
-        working-directory: .
-
     steps:
+      # ← gh が git 情報を参照しても安全に
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -132,6 +133,7 @@ jobs:
 
       - name: Determine tag name
         id: tag
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
@@ -141,21 +143,36 @@ jobs:
 
       - name: Create/Update GitHub Release (gh)
         env:
+          # gh は GH_TOKEN も GITHUB_TOKEN も読める。両方エクスポートしておくと安心
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        shell: bash
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
+
+          # 空ファイルを除外して配列に
           mapfile -t FILES < <(find ./artifacts -type f -size +0c)
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG exists. Try uploading assets..."
-            if ! gh release upload "$TAG" "${FILES[@]}" --clobber; then
+          # 既存があればアップロードを試み、失敗（immutable等）なら作り直し
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG exists. Uploading assets..."
+            if ! gh release upload "$TAG" "${FILES[@]}" --clobber --repo "$REPO"; then
               echo "Upload failed. Recreating release..."
-              gh release delete "$TAG" -y || true
-              gh release create "$TAG" "${FILES[@]}" --title "$TAG" --notes "Automated release for $TAG" --latest
+              gh release delete "$TAG" -y --repo "$REPO" || true
+              gh release create "$TAG" "${FILES[@]}" \
+                --title "$TAG" \
+                --notes "Automated release for $TAG" \
+                --latest \
+                --repo "$REPO"
             fi
           else
             echo "Creating new release $TAG"
-            gh release create "$TAG" "${FILES[@]}" --title "$TAG" --notes "Automated release for $TAG" --latest
+            gh release create "$TAG" "${FILES[@]}" \
+              --title "$TAG" \
+              --notes "Automated release for $TAG" \
+              --latest \
+              --repo "$REPO"
           fi
 
