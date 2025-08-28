@@ -2,3 +2,8 @@ public/generated/
 node_modules/
 *.log
 .DS_Store
+
+out/
+dist/
+electron-builder.yaml
+forge.config.js
