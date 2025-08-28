@@ -6,14 +6,13 @@ on:
     tags:
       - "v*"
   release:
-    types: [published]   # UIで公開したときも回す（createdでは回さない）
+    types: [published]
 
 permissions:
   contents: write
 
 jobs:
   build:
-    # src/配下で実行（releaseでは使わない）
     defaults:
       run:
         working-directory: src
@@ -25,12 +24,24 @@ jobs:
           - os: macos-14
             target: mac
             args: --mac
+            glob: |
+              src/dist/*.dmg
+              src/dist/*-mac*.zip
           - os: windows-2022
             target: win
             args: --win
+            glob: |
+              src/dist/*.exe
+              src/dist/*.msi
+              src/dist/*-win*.zip
           - os: ubuntu-latest
             target: linux
             args: --linux AppImage
+            glob: |
+              src/dist/*.AppImage
+              src/dist/*.deb
+              src/dist/*.rpm
+              src/dist/*.snap
 
     runs-on: ${{ matrix.os }}
 
@@ -62,17 +73,14 @@ jobs:
         run: |
           node -v
           npm -v
-          npx electron -v || true
           npx electron-builder --version || true
 
-      - name: Install deps (ci if lockfile, otherwise install)
+      - name: Install deps
         shell: bash
         run: |
           if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ] || [ -f yarn.lock ]; then
-            echo "Lockfile found → npm ci"
             npm ci
           else
-            echo "No lockfile → npm install"
             npm install
           fi
 
@@ -89,16 +97,15 @@ jobs:
       - name: List outputs (debug)
         shell: bash
         run: |
-          echo "== src directory =="
-          ls -la
-          echo "== dist directory =="
+          echo "== dist =="
           ls -la dist || true
 
+      # ← OSごとに“配布物だけ”をアップロード
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-dist
-          path: src/dist/**/*
+          path: ${{ matrix.glob }}
           if-no-files-found: error
 
       - name: Upload builder logs (always)
@@ -113,11 +120,6 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
     runs-on: ubuntu-latest
-
-    # 重複防止（同じタグの push と release 公開が同時でも一つに）
-    concurrency:
-      group: release-${{ github.ref_type == 'tag' && github.ref_name || github.event.release.tag_name }}
-      cancel-in-progress: false
 
     steps:
       - name: Checkout (for gh/git context)
@@ -153,10 +155,16 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
-          mapfile -t FILES < <(find ./artifacts -type f -size +0c)
+
+          # リリースに添付する“配布物だけ”を選別
+          mapfile -t FILES < <(find ./artifacts -type f \( \
+              -name '*.dmg' -o -name '*-mac*.zip' -o \
+              -name '*.exe' -o -name '*.msi' -o -name '*-win*.zip' -o \
+              -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.snap' \
+            \) -size +0c)
 
           if [ "${#FILES[@]}" -eq 0 ]; then
-            echo "No files found under ./artifacts"; exit 1
+            echo "No distributable files found under ./artifacts"; exit 1
           fi
 
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
