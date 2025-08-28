@@ -5,5 +5,4 @@ node_modules/
 
 out/
 dist/
-electron-builder.yaml
 forge.config.js

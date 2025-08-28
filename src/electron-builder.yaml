@@ -1,0 +1,50 @@
+productName: stereovision-with-mediapipe
+appId: com.mekann2904.stereovision-with-mediapipe
+
+
+directories:
+  output: dist
+
+asar: true                
+npmRebuild: true          
+
+files:
+  - index.html
+  - main.js
+  - preload.js
+  - renderer.js
+  - three_view.js
+  - package.json
+  - public/**             
+  - scripts/**
+
+
+artifactName: "${name}-${version}-${os}-${arch}.${ext}"
+
+
+mac:
+  target: [ "dmg", "zip" ]
+
+
+dmg:
+  sign: false
+
+# --- Windows ---
+win:
+  target: [ "nsis" ]      
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+
+# --- Linux ---
+linux:
+  target: [ "AppImage", "deb" ]  
+  category: Utility
+
+# （必要になったら有効化）
+# asarUnpack:
+#   - "node_modules/robotjs/**"
+#   - "node_modules/sharp/**"
+
