@@ -6,16 +6,21 @@ on:
     tags:
       - "v*"
 
+# すべての run を src/ で実行
+defaults:
+  run:
+    working-directory: src
+
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14        
+          - os: macos-14
             target: mac
             args: --mac
-          - os: windows-latest
+          - os: windows-2022   # 2025/09 以降の移行ノイズ回避で固定
             target: win
             args: --win
           - os: ubuntu-latest
@@ -33,6 +38,11 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          # lockファイルの場所を明示（src/）
+          cache-dependency-path: |
+            src/package-lock.json
+            src/npm-shrinkwrap.json
+            src/yarn.lock
 
       - name: Cache Electron caches
         uses: actions/cache@v4
@@ -40,19 +50,28 @@ jobs:
           path: |
             ~/.cache/electron
             ~/.cache/electron-builder
-          key: ${{ runner.os }}-electron-${{ hashFiles('**/package-lock.json') }}
+          key: ${{ runner.os }}-electron-${{ hashFiles('src/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
 
-      - name: Install deps
-        run: npm ci
+      - name: Install deps (ci if lockfile, otherwise install)
+        shell: bash
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ] || [ -f yarn.lock ]; then
+            echo "Lockfile found → npm ci"
+            npm ci
+          else
+            echo "No lockfile → npm install"
+            npm install
+          fi
 
       - name: Build (unsigned)
         run: npx electron-builder ${{ matrix.args }} -p never
         env:
           ELECTRON_CACHE: ~/.cache/electron
           ELECTRON_BUILDER_CACHE: ~/.cache/electron-builder
-          # mac の自動署名検出を完全オフ
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # 明示的に無署名にしたい場合は下記も空にできる（任意）
+          # 念のため完全に無署名にしたい場合は下記も空に
           # CSC_LINK: ""
           # WIN_CSC_LINK: ""
 
@@ -63,7 +82,6 @@ jobs:
           path: dist/**/*
           if-no-files-found: error
 
-  # タグ push 時に GitHub Releases を作成
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
