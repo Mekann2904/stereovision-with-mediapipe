@@ -6,14 +6,14 @@ on:
     tags:
       - "v*"
   release:
-    types: [created, published]
+    types: [published]   # UIで公開したときも回す（createdでは回さない）
 
 permissions:
   contents: write
 
 jobs:
   build:
-    # ← buildジョブだけ src を作業ディレクトリに
+    # src/配下で実行（releaseでは使わない）
     defaults:
       run:
         working-directory: src
@@ -98,7 +98,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-dist
-          # upload-artifact は リポジトリルート基準
           path: src/dist/**/*
           if-no-files-found: error
 
@@ -110,14 +109,18 @@ jobs:
           path: logs/**
           if-no-files-found: warn
 
-    release:
+  release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
     runs-on: ubuntu-latest
 
+    # 重複防止（同じタグの push と release 公開が同時でも一つに）
+    concurrency:
+      group: release-${{ github.ref_type == 'tag' && github.ref_name || github.event.release.tag_name }}
+      cancel-in-progress: false
+
     steps:
-      # ← gh が git 情報を参照しても安全に
-      - name: Checkout
+      - name: Checkout (for gh/git context)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -143,7 +146,6 @@ jobs:
 
       - name: Create/Update GitHub Release (gh)
         env:
-          # gh は GH_TOKEN も GITHUB_TOKEN も読める。両方エクスポートしておくと安心
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -151,15 +153,16 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
-
-          # 空ファイルを除外して配列に
           mapfile -t FILES < <(find ./artifacts -type f -size +0c)
 
-          # 既存があればアップロードを試み、失敗（immutable等）なら作り直し
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "No files found under ./artifacts"; exit 1
+          fi
+
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "Release $TAG exists. Uploading assets..."
             if ! gh release upload "$TAG" "${FILES[@]}" --clobber --repo "$REPO"; then
-              echo "Upload failed. Recreating release..."
+              echo "Upload failed (immutable or blocked). Recreating release..."
               gh release delete "$TAG" -y --repo "$REPO" || true
               gh release create "$TAG" "${FILES[@]}" \
                 --title "$TAG" \
