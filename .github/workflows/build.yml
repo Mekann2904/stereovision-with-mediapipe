@@ -6,6 +6,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 defaults:
   run:
     working-directory: src
@@ -75,7 +78,6 @@ jobs:
         shell: bash
         run: |
           mkdir -p ../logs
-          # ビルドログを保存しておく（後段で必ず取得できるようにする）
           npx electron-builder ${{ matrix.args }} -p never 2>&1 | tee ../logs/builder-${{ matrix.target }}.log
         env:
           ELECTRON_CACHE: ~/.cache/electron
@@ -94,7 +96,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-dist
-          # ← working-directory は src なので、リポジトリルート基準で src/dist を指定
+          # working-directory は src なので、リポジトリルート基準で src/dist を指定
           path: src/dist/**/*
           if-no-files-found: error
 
@@ -120,6 +122,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
