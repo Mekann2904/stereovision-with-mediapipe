@@ -6,17 +6,18 @@ on:
     tags:
       - "v*"
   release:
-    types: [created, published]   # ← 追加：Release作成でも動く
+    types: [created, published]
 
 permissions:
   contents: write
 
-defaults:
-  run:
-    working-directory: src
-
 jobs:
   build:
+    # ← buildジョブだけ src を作業ディレクトリに
+    defaults:
+      run:
+        working-directory: src
+
     strategy:
       fail-fast: false
       matrix:
@@ -97,6 +98,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-dist
+          # upload-artifact は リポジトリルート基準
           path: src/dist/**/*
           if-no-files-found: error
 
@@ -110,9 +112,14 @@ jobs:
 
   release:
     needs: build
-    # push タグ or release イベントのどちらでも許可
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
     runs-on: ubuntu-latest
+
+    # ← releaseジョブはルートで実行（srcにしない）
+    defaults:
+      run:
+        working-directory: .
+
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -125,7 +132,6 @@ jobs:
 
       - name: Determine tag name
         id: tag
-        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
@@ -136,7 +142,6 @@ jobs:
       - name: Create/Update GitHub Release (gh)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
@@ -145,7 +150,7 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG exists. Try uploading assets..."
             if ! gh release upload "$TAG" "${FILES[@]}" --clobber; then
-              echo "Upload failed (immutable or blocked). Recreating release..."
+              echo "Upload failed. Recreating release..."
               gh release delete "$TAG" -y || true
               gh release create "$TAG" "${FILES[@]}" --title "$TAG" --notes "Automated release for $TAG" --latest
             fi
