@@ -6,7 +6,6 @@ on:
     tags:
       - "v*"
 
-# すべての run を src/ で実行
 defaults:
   run:
     working-directory: src
@@ -20,12 +19,13 @@ jobs:
           - os: macos-14
             target: mac
             args: --mac
-          - os: windows-2022   # 2025/09 以降の移行ノイズ回避で固定
+          - os: windows-2022
             target: win
             args: --win
           - os: ubuntu-latest
             target: linux
-            args: --linux
+            # まずは AppImage のみにすると通りやすい（必要なら --linux deb を後で足す）
+            args: --linux AppImage
 
     runs-on: ${{ matrix.os }}
 
@@ -38,7 +38,6 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          # lockファイルの場所を明示（src/）
           cache-dependency-path: |
             src/package-lock.json
             src/npm-shrinkwrap.json
@@ -54,6 +53,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-electron-
 
+      - name: Print versions
+        run: |
+          node -v
+          npm -v
+          npx electron -v || true
+          npx electron-builder --version || true
+
       - name: Install deps (ci if lockfile, otherwise install)
         shell: bash
         run: |
@@ -65,22 +71,40 @@ jobs:
             npm install
           fi
 
-      - name: Build (unsigned)
-        run: npx electron-builder ${{ matrix.args }} -p never
+      - name: Build (unsigned) with log
+        shell: bash
+        run: |
+          mkdir -p ../logs
+          # ビルドログを保存しておく（後段で必ず取得できるようにする）
+          npx electron-builder ${{ matrix.args }} -p never 2>&1 | tee ../logs/builder-${{ matrix.target }}.log
         env:
           ELECTRON_CACHE: ~/.cache/electron
           ELECTRON_BUILDER_CACHE: ~/.cache/electron-builder
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # 念のため完全に無署名にしたい場合は下記も空に
-          # CSC_LINK: ""
-          # WIN_CSC_LINK: ""
 
-      - name: Upload artifacts
+      - name: List outputs (debug)
+        shell: bash
+        run: |
+          echo "== src directory =="
+          ls -la
+          echo "== dist directory =="
+          ls -la dist || true
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-dist
-          path: dist/**/*
+          # ← working-directory は src なので、リポジトリルート基準で src/dist を指定
+          path: src/dist/**/*
           if-no-files-found: error
+
+      - name: Upload builder logs (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}-logs
+          path: logs/**
+          if-no-files-found: warn
 
   release:
     needs: build
