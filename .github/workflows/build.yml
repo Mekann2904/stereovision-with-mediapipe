@@ -5,6 +5,8 @@ on:
   push:
     tags:
       - "v*"
+  release:
+    types: [created, published]   # ← 追加：Release作成でも動く
 
 permissions:
   contents: write
@@ -27,7 +29,6 @@ jobs:
             args: --win
           - os: ubuntu-latest
             target: linux
-            # まずは AppImage のみにすると通りやすい（必要なら --linux deb を後で足す）
             args: --linux AppImage
 
     runs-on: ${{ matrix.os }}
@@ -96,7 +97,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-dist
-          # working-directory は src なので、リポジトリルート基準で src/dist を指定
           path: src/dist/**/*
           if-no-files-found: error
 
@@ -108,9 +108,10 @@ jobs:
           path: logs/**
           if-no-files-found: warn
 
-   release:
+  release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    # push タグ or release イベントのどちらでも許可
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -120,25 +121,36 @@ jobs:
 
       - name: Show assets (debug)
         run: |
-          find ./artifacts -type f -ls
+          find ./artifacts -type f -ls || true
 
-      - name: Create GitHub Release with assets (gh)
+      - name: Determine tag name
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create/Update GitHub Release (gh)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/}"
-
-          # すべてのファイルを配列に格納（ディレクトリ混入を回避）
+          TAG="${{ steps.tag.outputs.tag }}"
           mapfile -t FILES < <(find ./artifacts -type f -size +0c)
 
-          # 既に同タグのリリースがあれば消して作り直したい場合は次の1行を有効化
-          # gh release delete "$TAG" -y || true
-
-          # 作成と同時に資産を添付（公開リリース / 最新扱い）
-          gh release create "$TAG" "${FILES[@]}" \
-            --title "$TAG" \
-            --notes "Automated release for $TAG" \
-            --latest
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists. Try uploading assets..."
+            if ! gh release upload "$TAG" "${FILES[@]}" --clobber; then
+              echo "Upload failed (immutable or blocked). Recreating release..."
+              gh release delete "$TAG" -y || true
+              gh release create "$TAG" "${FILES[@]}" --title "$TAG" --notes "Automated release for $TAG" --latest
+            fi
+          else
+            echo "Creating new release $TAG"
+            gh release create "$TAG" "${FILES[@]}" --title "$TAG" --notes "Automated release for $TAG" --latest
+          fi
 
